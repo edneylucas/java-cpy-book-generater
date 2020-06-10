@@ -1,0 +1,293 @@
+package br.com.itau.cpy;
+import java.io.File;
+import java.io.FileFilter;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+
+import javax.lang.model.element.Modifier;
+
+import com.squareup.javapoet.AnnotationSpec;
+import com.squareup.javapoet.ClassName;
+import com.squareup.javapoet.CodeBlock;
+import com.squareup.javapoet.FieldSpec;
+import com.squareup.javapoet.JavaFile;
+import com.squareup.javapoet.MethodSpec;
+import com.squareup.javapoet.ParameterizedTypeName;
+import com.squareup.javapoet.TypeName;
+import com.squareup.javapoet.TypeSpec;
+import com.squareup.javapoet.TypeSpec.Builder;
+
+import br.com.bradesco.pdc.copybook.CopyParser;
+import br.com.bradesco.pdc.copybook.exception.CopybookException;
+import br.com.bradesco.pdc.copybook.model.TransactionCopy;
+import br.com.bradesco.pdc.copybook.model.TransactionCopyContainer;
+import br.com.bradesco.pdc.copybook.model.TransactionCopyField;
+import br.com.bradesco.pdc.copybook.model.TransactionCopyRegister;
+import br.com.wipro.cpyjavacore.api.annotation.CopyBook;
+import br.com.wipro.cpyjavacore.api.annotation.Field;
+import br.com.wipro.cpyjavacore.api.annotation.List;
+
+public class CodeGenerator {
+	
+	private static final String PATH_PROPERTIES = "/cpybookjavagenerator_config/cpybookjavagenerator.properties";
+	
+	
+	
+	
+
+
+	private ClassName outterClassName;
+
+	Map<Object, Integer> orderCounter = new HashMap<Object, Integer>();
+
+	public static void main(String[] args) throws CopybookException, IOException {
+
+		String packageName = "br.com.bradesco.tfra.retaguarda.assi";
+		// FileInputStream inputStream = new FileInputStream(new
+		// File("C:/DEV/repos/tbol/src/war/tbol_cambio_interdepartamental/Resources/cobol/copybooks/tbolwsy1.cpy"));C:\workspaceFDDB_TFRA\TFRAErpc\copybooks\AZADE.cpy
+		File[] listFiles = new File("C:\\Temp\\copybooks").listFiles(new FileFilter() {
+			@Override
+			public boolean accept(File file) {
+				return file.getAbsolutePath().endsWith(".cpy");
+			}
+		});
+		for (File file : listFiles) {
+			FileInputStream inputStream = new FileInputStream(file);
+			byte[] buffer = new byte[1024];
+			StringBuilder builder = new StringBuilder();
+			while (inputStream.read(buffer) != -1) {
+				builder.append(new String(buffer));
+				buffer = new byte[1024];
+			}
+			inputStream.close();
+			String cobol = builder.toString();
+			TransactionCopy transactionCopy = CopyParser.generateTransactionCopy(cobol);
+
+			transactionCopy.setName(file.getName().toUpperCase().split("\\.")[0]);
+			CodeGenerator main = new CodeGenerator();
+
+			main.createClass(packageName, transactionCopy, new File("C:\\Temp\\copybooks"));
+		}
+	}
+
+	private int getOrder(Object object) {
+
+		Integer count = orderCounter.get(object);
+		if (count == null) {
+			count = 1;
+		}
+		orderCounter.put(object, count + 1);
+
+		return count;
+
+	}
+
+	private void createClass(String packageName, TransactionCopy transactionCopy, File outputFolder) {
+		outterClassName = ClassName.get(packageName, getUpperCamelCaseName(transactionCopy.getName()));
+
+		Builder builder = TypeSpec.classBuilder(outterClassName);
+		builder.addModifiers(Modifier.PUBLIC);
+
+		builder.addAnnotation(
+				AnnotationSpec.builder(CopyBook.class).addMember("totalBytes", "$S", transactionCopy.getTotalBytes())
+						.addMember("name", "$S", transactionCopy.getName()).build());
+		for (Object object : transactionCopy.getElements()) {
+			if (object instanceof TransactionCopyRegister) {
+				TransactionCopyRegister register = (TransactionCopyRegister) object;
+				transverseStructure(register, builder);
+			} else if (object instanceof TransactionCopyField) {
+				TransactionCopyField field = (TransactionCopyField) object;
+				createField(field, builder);
+			}
+		}
+
+		JavaFile javaFile = JavaFile.builder(packageName, builder.build()).build();
+
+		try {
+			javaFile.writeTo(outputFolder);
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	private void createListClass(TransactionCopyRegister transactionCopyRegister, Builder builder) {
+
+		String fieldName = getLowerCamelCaseName(transactionCopyRegister.getName());
+		String fieldNameMethod = getUpperCamelCaseName(transactionCopyRegister.getName());
+		ClassName inner = outterClassName.nestedClass(getUpperCamelCaseName(transactionCopyRegister.getName()));
+
+		Builder listClassBuilder = TypeSpec.classBuilder(inner);
+		listClassBuilder.addModifiers(Modifier.PUBLIC).addModifiers(Modifier.STATIC);
+
+		for (Object object : transactionCopyRegister.getElements()) {
+			if (object instanceof TransactionCopyRegister) {
+				TransactionCopyRegister register = (TransactionCopyRegister) object;
+				transverseStructure(register, listClassBuilder);
+			} else if (object instanceof TransactionCopyField) {
+				TransactionCopyField field = (TransactionCopyField) object;
+				createField(field, listClassBuilder);
+			}
+		}
+		
+		
+		
+		TypeSpec build = listClassBuilder.build();
+
+		ClassName list = ClassName.get("java.util", "List");
+		TypeName listinner = ParameterizedTypeName.get(list, inner);
+		FieldSpec fieldSpec = FieldSpec.builder(listinner, fieldName).addModifiers(Modifier.PRIVATE)
+				.initializer(CodeBlock.builder().addStatement("new $T<$T>()", ArrayList.class, inner).build())
+				.addAnnotation(AnnotationSpec.builder(List.class).addMember("order", "$S", getOrder(builder))
+						.addMember("dependsOccurs", "$S", transactionCopyRegister.getDependsOccurs())
+						.addMember("dependsType", "$S", transactionCopyRegister.getDependsType())
+						.addMember("dependsValues", "$S",
+								transactionCopyRegister.getDependsValues() == null ? ""
+										: transactionCopyRegister.getDependsValues())
+						.addMember("maxOccurs", "$S", transactionCopyRegister.getMaxOccurs())
+						.addMember("minOccurs", "$S", transactionCopyRegister.getMinOccurs())
+						.addMember("name", "$S", transactionCopyRegister.getName())
+						.addMember("parent", "$S", transactionCopyRegister.getParent().getName()).build())
+				.build();
+
+		MethodSpec setMethod = MethodSpec.methodBuilder("set" + fieldNameMethod).addModifiers(Modifier.PUBLIC)
+				.addParameter(listinner, fieldName).addStatement("this.$N = $N", fieldName, fieldName).build();
+
+		MethodSpec addMethod = MethodSpec.methodBuilder("add" + fieldNameMethod).addModifiers(Modifier.PUBLIC)
+				.addParameter(inner, fieldName).addStatement("this.$N.add($N)", fieldName, fieldName).build();
+
+		MethodSpec getMethod = MethodSpec.methodBuilder("get" + fieldNameMethod).addModifiers(Modifier.PUBLIC)
+				.returns(listinner).addStatement("return $N", fieldName).build();
+
+		MethodSpec getIndexMethod = MethodSpec.methodBuilder("get" + fieldNameMethod).addModifiers(Modifier.PUBLIC)
+				.addParameter(int.class, "index").returns(inner).addStatement("return this.$N.get(index)", fieldName)
+				.build();
+
+		builder.addField(fieldSpec);
+		builder.addMethod(setMethod);
+		builder.addMethod(addMethod);
+		builder.addMethod(getMethod);
+		builder.addMethod(getIndexMethod);
+		builder.addType(build);
+
+	}
+
+	private void transverseStructure(TransactionCopyRegister transactionCopyRegister, Builder builder) {
+		if (transactionCopyRegister.getDependsOccurs() != null || transactionCopyRegister.getMaxOccurs() > 1) {
+			TransactionCopyContainer parent = transactionCopyRegister.getParent();
+			while (((TransactionCopyField) parent.getElement(transactionCopyRegister.getDependsOccurs())) == null) {
+				parent = parent.getParent();
+			}
+			createListClass(transactionCopyRegister, builder);
+		} else {
+			for (Object object : transactionCopyRegister.getElements()) {
+				if (object instanceof TransactionCopyRegister) {
+					TransactionCopyRegister register = (TransactionCopyRegister) object;
+					transverseStructure(register, builder);
+				} else if (object instanceof TransactionCopyField) {
+					TransactionCopyField field = (TransactionCopyField) object;
+					createField(field, builder);
+				}
+			}
+		}
+	}
+
+	private void createField(TransactionCopyField transactionCopyField, Builder builder) {
+
+		Class<?> filedClassType = null;
+		String fieldName = getLowerCamelCaseName(transactionCopyField.getName());
+		String fieldNameMethod = getUpperCamelCaseName(transactionCopyField.getName());
+
+		if ("NUMERIC".equals(transactionCopyField.getType())) {
+			if (transactionCopyField.getDecimals() > 0) {
+				filedClassType = BigDecimal.class;
+			} else {
+				if (transactionCopyField.getBytes() > 9) {
+					filedClassType = Long.class;
+				} else {
+					filedClassType = Integer.class;
+				}
+			}
+		} else {
+			filedClassType = String.class;
+		}
+
+		com.squareup.javapoet.AnnotationSpec.Builder annotationBuilder = AnnotationSpec.builder(Field.class);
+
+		annotationBuilder.addMember("order", "$S", getOrder(builder));
+		annotationBuilder.addMember("name", "$S", transactionCopyField.getName());
+		annotationBuilder.addMember("parent", "$S", transactionCopyField.getParent().getName());
+		annotationBuilder.addMember("pic", "$S", transactionCopyField.getPIC());
+		annotationBuilder.addMember("type", "$S", transactionCopyField.getType());
+		annotationBuilder.addMember("bytes", "$S", transactionCopyField.getBytes());
+
+		if (transactionCopyField.getDecimals() > 0) {
+			annotationBuilder.addMember("decimals", "$S", transactionCopyField.getDecimals());
+		}
+		if (transactionCopyField.getDependsOccurs() != null) {
+			annotationBuilder.addMember("dependsOccurs", "$S", transactionCopyField.getDependsOccurs());
+		}
+		if (transactionCopyField.getDependsType() != null && !"number".equals(transactionCopyField.getDependsType())) {
+			annotationBuilder.addMember("dependsType", "$S", transactionCopyField.getDependsType());
+		}
+		if (transactionCopyField.getDependsValues() != null) {
+			annotationBuilder.addMember("dependsValues", "$S", transactionCopyField.getDependsValues());
+		}
+		if (transactionCopyField.getLength() > 0) {
+			annotationBuilder.addMember("length", "$S", transactionCopyField.getLength());
+		}
+		if (transactionCopyField.getMaxOccurs() > 1) {
+			annotationBuilder.addMember("maxOccurs", "$S", transactionCopyField.getMaxOccurs());
+		}
+		if (transactionCopyField.getMinOccurs() > 1) {
+			annotationBuilder.addMember("minOccurs", "$S", transactionCopyField.getMinOccurs());
+		}
+		if (transactionCopyField.getUsage() != null && !"DISPLAY".equals(transactionCopyField.getUsage())) {
+			annotationBuilder.addMember("usage", "$S", transactionCopyField.getUsage());
+		}
+		if (transactionCopyField.getSign() != null && !"nosign".equals(transactionCopyField.getSign())) {
+			annotationBuilder.addMember("sign", "$S", transactionCopyField.getSign());
+		}
+		if (transactionCopyField.getValue() != null) {
+			annotationBuilder.addMember("defaultValue", "$S", transactionCopyField.getValue());
+		}
+
+		FieldSpec fieldSpec = FieldSpec.builder(filedClassType, fieldName).addModifiers(Modifier.PRIVATE)
+				.addAnnotation(annotationBuilder.build()).build();
+
+		MethodSpec setMethod = MethodSpec.methodBuilder("set" + fieldNameMethod).addModifiers(Modifier.PUBLIC)
+				.addParameter(filedClassType, fieldName).addStatement("this.$N = $N", fieldName, fieldName).build();
+
+		MethodSpec getMethod = MethodSpec.methodBuilder("get" + fieldNameMethod).addModifiers(Modifier.PUBLIC)
+				.returns(filedClassType).addStatement("return $N", fieldName).build();
+
+		builder.addField(fieldSpec);
+		builder.addMethod(setMethod);
+		builder.addMethod(getMethod);
+	}
+
+	private static String getUpperCamelCaseName(String originalName) {
+		String lowerCamelCaseName = getLowerCamelCaseName(originalName);
+		return lowerCamelCaseName.substring(0, 1).toUpperCase() + lowerCamelCaseName.substring(1);
+	}
+
+	private static String getLowerCamelCaseName(String originalName) {
+		String[] partNames = originalName.split("\\W");
+		StringBuilder returnString = new StringBuilder();
+		int initialIndex = 0;
+		if (partNames.length > initialIndex) {
+			returnString.append(partNames[initialIndex].substring(0, 1).toLowerCase() + partNames[initialIndex].substring(1).toLowerCase());
+			for (int i = initialIndex+1; i < partNames.length; i++) {
+				returnString.append(partNames[i].substring(0, 1).toUpperCase() + partNames[i].substring(1).toLowerCase());
+			}
+		} else {
+			returnString.append(partNames[0].substring(0, 1).toLowerCase() + partNames[0].substring(1).toLowerCase());
+		}
+
+		return returnString.toString();
+	}
+
+}

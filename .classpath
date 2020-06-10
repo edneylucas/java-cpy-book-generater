@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="src" path="src"/>
+	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER">
+		<attributes>
+			<attribute name="module" value="true"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry kind="lib" path="lib/javapoet-1.9.0.jar" sourcepath="C:/Users/Ddias/AppData/Local/Temp/.org.sf.feeling.decompiler1511959241333/source/javapoet-1.9.0-sources.jar"/>
+	<classpathentry combineaccessrules="false" kind="src" path="/Cpybook"/>
+	<classpathentry combineaccessrules="false" kind="src" path="/CpyJavaCore"/>
+	<classpathentry kind="lib" path="lib/slf4j-api-1.7.6.jar"/>
+	<classpathentry kind="lib" path="lib/logback-classic-1.1.2.jar"/>
+	<classpathentry kind="lib" path="lib/logback-core-1.1.2.jar"/>
+	<classpathentry kind="output" path="bin"/>
+</classpath>
